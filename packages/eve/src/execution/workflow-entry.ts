@@ -141,6 +141,7 @@ export async function workflowEntry(input: WorkflowEntryInput): Promise<Workflow
         kind: "deliver",
         payloads: [
           {
+            channelData: input.input.channelData,
             message: input.input.message,
             context: input.input.context,
             outputSchema: input.input.outputSchema,
