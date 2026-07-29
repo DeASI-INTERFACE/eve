@@ -129,6 +129,14 @@ const resumed = await session.send({
 await resumed.result();
 ```
 
+For response-authorized approvals, submitting `approve` creates a responder-bound candidate; it does not immediately close the shared request. Keep consuming the durable stream:
+
+- `approval.candidate` reports safe pending, rejected, failed, timed-out, and stale outcomes. Candidate-local UI should be private to its responder.
+- candidate-correlated `authorization.required` carries a private sign-in challenge.
+- `approval.settled` is the terminal authority for removing shared controls and shows whether the request was approved or cancelled.
+
+Delivery only acknowledges ingestion. OAuth may resume the same candidate later, so reconnecting clients should replay settlement history to repair stale UI.
+
 You can send `message`, `inputResponses`, and `clientContext` together when the resumed turn needs both a human answer and follow-up text.
 
 ## Single-use responses
