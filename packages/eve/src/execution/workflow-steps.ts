@@ -173,11 +173,19 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
   // the `emit` function is created below.
   const pendingAuth = getPendingAuthorization(durableSession.state);
   let completedAuths:
-    | Array<{ name: string; authorization: ConnectionAuthorizationChallenge }>
+    | Array<{
+        candidateId?: string;
+        name: string;
+        authorization: ConnectionAuthorizationChallenge;
+      }>
     | undefined;
   if (pendingAuth && input.input?.kind === "deliver") {
     const authResults: Array<{ name: string } & AuthorizationResult> = [];
-    const completed: Array<{ name: string; authorization: ConnectionAuthorizationChallenge }> = [];
+    const completed: Array<{
+      candidateId?: string;
+      name: string;
+      authorization: ConnectionAuthorizationChallenge;
+    }> = [];
     const remainingPayloads: DeliverPayload[] = [];
     for (const payload of input.input.payloads) {
       const cb = payload["authorizationCallback"] as
@@ -192,7 +200,11 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
             callback: cb.callback,
             hookUrl: challenge.hookUrl,
           });
-          completed.push({ name: challenge.name, authorization: challenge.challenge });
+          completed.push({
+            candidateId: challenge.candidateId,
+            name: challenge.name,
+            authorization: challenge.challenge,
+          });
         }
       } else {
         remainingPayloads.push(payload);
@@ -389,10 +401,11 @@ export async function turnStep(rawInput: TurnStepInput): Promise<DurableStepResu
       });
       if (completedAuths) {
         const emissionState = getHarnessEmissionState(schemaSession.state);
-        for (const { name, authorization } of completedAuths) {
+        for (const { candidateId, name, authorization } of completedAuths) {
           await handleEvent(
             createAuthorizationCompletedEvent({
               authorization,
+              candidateId,
               name,
               outcome: "authorized",
               sequence: emissionState.sequence,
