@@ -68,10 +68,11 @@ export default defineEval({
   tags: ["real-model"],
   description: "Static tools smoke: a local action request streams while execution is pending.",
   async test(t) {
-    const turn = await t.send(
-      `Call the \`${TOOL_NAME}\` tool exactly once with label "${LABEL}". ` +
+    const turn = await t.send({
+      message:
+        `Call the \`${TOOL_NAME}\` tool exactly once with label "${LABEL}". ` +
         "After it returns, reply with the label verbatim.",
-    );
+    });
     turn.expectOk();
 
     t.succeeded();
