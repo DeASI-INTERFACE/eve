@@ -246,7 +246,7 @@ export async function emitRecoverableFailedTurn(
   input: FailedStepPayload & { readonly continuationToken: string },
 ): Promise<HarnessEmissionState> {
   await emitStepAndTurnFailed(emitFn, state, input);
-  await emitFn(createSessionWaitingEvent(input.continuationToken));
+  await emitFn(createSessionWaitingEvent());
 
   return {
     sessionStarted: state.sessionStarted,
@@ -274,7 +274,6 @@ export async function emitTurnEpilogue(
   emitFn: HarnessEmitFn,
   state: HarnessEmissionState,
   mode: RunMode,
-  continuationToken: string,
 ): Promise<HarnessEmissionState> {
   await emitFn(
     createTurnCompletedEvent({
@@ -284,7 +283,7 @@ export async function emitTurnEpilogue(
   );
 
   if (mode === "conversation") {
-    await emitFn(createSessionWaitingEvent(continuationToken));
+    await emitFn(createSessionWaitingEvent());
   } else {
     await emitFn(createSessionCompletedEvent());
   }

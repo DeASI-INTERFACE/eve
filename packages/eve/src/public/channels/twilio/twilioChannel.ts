@@ -48,7 +48,7 @@ import {
   GET,
   POST,
   type Channel,
-  type SendFn,
+  type ChannelAddressFn,
 } from "#public/definitions/channel.js";
 
 const log = createLogger("twilio.channel");
@@ -328,22 +328,24 @@ export function twilioChannel(config: TwilioChannelConfig): TwilioChannel {
       POST<TwilioChannelState>(routes.transcription, transcription),
     ],
 
-    async receive(input, { send }) {
+    async receive(input, { channelAddress }) {
       const phoneNumber = readNonEmptyString(input.target.phoneNumber);
       if (!phoneNumber) {
         throw new Error("twilioChannel().receive requires target.phoneNumber.");
       }
       const from = readNonEmptyString(input.target.from) ?? config.messaging?.from ?? null;
-      return send(input.message, {
-        auth: input.auth,
-        continuationToken: twilioContinuationToken(phoneNumber, from ?? undefined),
-        state: {
-          from: phoneNumber,
-          lastCallSid: null,
-          lastMessageSid: null,
-          to: from,
+      return channelAddress(twilioContinuationToken(phoneNumber, from ?? undefined)).send(
+        input.message,
+        {
+          auth: input.auth,
+          state: {
+            from: phoneNumber,
+            lastCallSid: null,
+            lastMessageSid: null,
+            to: from,
+          },
         },
-      });
+      );
     },
 
     events: mergedEvents,
@@ -354,7 +356,7 @@ function handleTwilioMessages(input: {
   readonly config: TwilioChannelConfig;
   readonly onText: NonNullable<TwilioChannelConfig["onText"]>;
 }): RouteHandler<TwilioChannelState> {
-  return async (req, { send, waitUntil }) => {
+  return async (req, { channelAddress, waitUntil }) => {
     const verified = await verifyTwilioInbound(req, input.config);
     if (verified === null) return new Response("unauthorized", { status: 401 });
 
@@ -369,7 +371,7 @@ function handleTwilioMessages(input: {
         config: input.config,
         message,
         onText: input.onText,
-        send,
+        channelAddress,
       }),
     );
     return emptyTwilioResponse();
@@ -421,7 +423,7 @@ function handleTwilioTranscription(input: {
   readonly onVoiceTranscription: NonNullable<TwilioChannelConfig["onVoiceTranscription"]>;
   readonly routes: TwilioRoutes;
 }): RouteHandler<TwilioChannelState> {
-  return async (req, { send, waitUntil }) => {
+  return async (req, { channelAddress, waitUntil }) => {
     const verified = await verifyTwilioInbound(req, input.config);
     if (verified === null) return new Response("unauthorized", { status: 401 });
 
@@ -443,7 +445,7 @@ function handleTwilioTranscription(input: {
       dispatchVoiceTranscription({
         config: input.config,
         onVoiceTranscription: input.onVoiceTranscription,
-        send,
+        channelAddress,
         transcription,
       }),
     );
@@ -530,7 +532,7 @@ async function dispatchText(input: {
   readonly config: TwilioChannelConfig;
   readonly message: TwilioTextMessage;
   readonly onText: NonNullable<TwilioChannelConfig["onText"]>;
-  readonly send: SendFn<TwilioChannelState>;
+  readonly channelAddress: ChannelAddressFn<TwilioChannelState>;
 }): Promise<void> {
   const { message } = input;
   const twilio: TwilioContext = {
@@ -559,14 +561,13 @@ async function dispatchText(input: {
   });
 
   try {
-    await input.send(
+    await input.channelAddress(twilioContinuationToken(message.from, message.to)).send(
       {
         message: message.body,
         context: [contextBlock],
       },
       {
         auth: result.auth,
-        continuationToken: twilioContinuationToken(message.from, message.to),
         state: {
           from: message.from,
           lastCallSid: null,
@@ -606,7 +607,7 @@ async function acceptVoiceCall(input: {
 async function dispatchVoiceTranscription(input: {
   readonly config: TwilioChannelConfig;
   readonly onVoiceTranscription: NonNullable<TwilioChannelConfig["onVoiceTranscription"]>;
-  readonly send: SendFn<TwilioChannelState>;
+  readonly channelAddress: ChannelAddressFn<TwilioChannelState>;
   readonly transcription: TwilioVoiceTranscription;
 }): Promise<void> {
   const { transcription } = input;
@@ -636,14 +637,13 @@ async function dispatchVoiceTranscription(input: {
   });
 
   try {
-    await input.send(
+    await input.channelAddress(twilioContinuationToken(transcription.from, transcription.to)).send(
       {
         message: transcription.text,
         context: [contextBlock],
       },
       {
         auth: result.auth,
-        continuationToken: twilioContinuationToken(transcription.from, transcription.to),
         state: {
           from: transcription.from,
           lastCallSid: transcription.callSid ?? null,
