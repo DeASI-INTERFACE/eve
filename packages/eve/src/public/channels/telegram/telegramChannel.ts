@@ -1,6 +1,6 @@
 import type { TelegramInstrumentationMetadata } from "#public/channels/telegram/index.js";
 import { defaultDeliverResult, type ChannelAdapterContext } from "#channel/adapter.js";
-import type { ChannelOperations } from "#channel/channel-operations.js";
+import type { ChannelFrom } from "#channel/channel-operations.js";
 import type { SessionHandle } from "#channel/session.js";
 import type { DeliverPayload, SessionAuthContext } from "#channel/types.js";
 import type { SessionContext } from "#public/definitions/callback-context.js";
@@ -231,7 +231,7 @@ export function telegramChannel(config: TelegramChannelConfig = {}): TelegramCha
     routes: [
       POST<TelegramChannelState>(
         config.route ?? "/eve/v1/telegram",
-        async (req, { send, waitUntil }) => {
+        async (req, { from, waitUntil }) => {
           const body = await verifyInbound(req, config.credentials);
           if (body === null) return new Response("unauthorized", { status: 401 });
 
@@ -253,7 +253,7 @@ export function telegramChannel(config: TelegramChannelConfig = {}): TelegramCha
                 message: update.message,
                 onMessage,
                 uploadPolicy,
-                send,
+                from,
               }),
             );
             return new Response("ok");
@@ -263,7 +263,7 @@ export function telegramChannel(config: TelegramChannelConfig = {}): TelegramCha
             dispatchCallbackQuery({
               config,
               query: update.callbackQuery,
-              send,
+              from,
             }),
           );
           return new Response("ok");
@@ -271,7 +271,7 @@ export function telegramChannel(config: TelegramChannelConfig = {}): TelegramCha
       ),
     ],
 
-    async receive(input, { send }) {
+    async receive(input, { from }) {
       const receiveTarget = input.target as Partial<TelegramReceiveTarget>;
       const chatId = readChatId(receiveTarget.chatId);
       if (chatId === undefined) {
@@ -304,9 +304,8 @@ export function telegramChannel(config: TelegramChannelConfig = {}): TelegramCha
         await handle.sendMessage(initialMessage);
       }
 
-      return send(continuationTokenFromState(receiveState), {
+      return from(continuationTokenFromState(receiveState)).send(input.message, {
         auth: input.auth,
-        message: input.message,
         state: receiveState,
       });
     },
@@ -475,7 +474,7 @@ async function dispatchMessage(input: {
   readonly config: TelegramChannelConfig;
   readonly message: TelegramMessage;
   readonly onMessage: NonNullable<TelegramChannelConfig["onMessage"]>;
-  readonly send: ChannelOperations<TelegramChannelState>["send"];
+  readonly from: ChannelFrom<TelegramChannelState>;
   readonly uploadPolicy: UploadPolicy;
 }): Promise<void> {
   if (input.message.from?.isBot === true) return;
@@ -520,13 +519,19 @@ async function dispatchMessage(input: {
       : undefined;
 
   try {
-    await input.send(continuationTokenFromState(state), {
-      auth: result.auth,
-      context: [contextBlock, ...channelContext],
-      inputResponses: replyInputResponses,
-      message: turnMessage,
-      state,
-    });
+    const source = input.from(continuationTokenFromState(state));
+    if (replyInputResponses === undefined) {
+      await source.send(turnMessage, {
+        auth: result.auth,
+        context: [contextBlock, ...channelContext],
+        state,
+      });
+    } else {
+      await source.respond(replyInputResponses, {
+        auth: result.auth,
+        context: [contextBlock, ...channelContext],
+      });
+    }
   } catch (error) {
     log.error("message delivery failed", { error });
   }
@@ -535,7 +540,7 @@ async function dispatchMessage(input: {
 async function dispatchCallbackQuery(input: {
   readonly config: TelegramChannelConfig;
   readonly query: TelegramCallbackQuery;
-  readonly send: ChannelOperations<TelegramChannelState>["send"];
+  readonly from: ChannelFrom<TelegramChannelState>;
 }): Promise<void> {
   const state = stateFromCallbackQuery(input.query, input.config);
   const telegram: TelegramContext = {
@@ -554,10 +559,9 @@ async function dispatchCallbackQuery(input: {
 
     if (!input.query.message || !state.chatId) return;
     try {
-      await input.send(continuationTokenFromState(state), {
+      const source = input.from(continuationTokenFromState(state));
+      await source.respond([telegramCallbackInputResponse(input.query.data)], {
         auth: null,
-        inputResponses: [telegramCallbackInputResponse(input.query.data)],
-        state,
       });
     } catch (error) {
       log.error("callback query delivery failed", { error });

@@ -1,6 +1,6 @@
 import type { SessionHandle } from "#channel/session.js";
 import type { SessionAuthContext } from "#channel/types.js";
-import type { ChannelOperations } from "#channel/channel-operations.js";
+import type { ChannelFrom } from "#channel/channel-operations.js";
 import { createLogger } from "#internal/logging.js";
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import {
@@ -223,7 +223,7 @@ export function linearChannel(config: LinearChannelConfig = {}): LinearChannel {
     routes: [
       POST<LinearChannelState>(
         config.route ?? LINEAR_CHANNEL_DEFAULT_ROUTE,
-        async (req, { send, waitUntil }) => {
+        async (req, { from, waitUntil }) => {
           const body = await verifyInbound(req, config.credentials);
           if (body === null) return new Response("unauthorized", { status: 401 });
 
@@ -238,7 +238,7 @@ export function linearChannel(config: LinearChannelConfig = {}): LinearChannel {
           if (event === null) return jsonOk({ ignored: true, ok: true });
 
           if (event.kind === "agent_session") {
-            waitUntil(dispatchAgentSession({ config, event, onAgentSession, send }));
+            waitUntil(dispatchAgentSession({ config, event, from, onAgentSession }));
             return jsonOk({ ok: true });
           }
 
@@ -252,7 +252,7 @@ export function linearChannel(config: LinearChannelConfig = {}): LinearChannel {
       ),
     ],
 
-    async receive(input, { send }) {
+    async receive(input, { from }) {
       const target = input.target as Record<string, unknown>;
       const session = await resolveReceiveSession(target, config);
 
@@ -268,9 +268,8 @@ export function linearChannel(config: LinearChannelConfig = {}): LinearChannel {
         });
       }
 
-      return send(linearContinuationToken(session.id), {
+      return from(linearContinuationToken(session.id)).send(input.message, {
         auth: input.auth,
-        message: input.message,
         state: stateFromAgentSession(session),
       });
     },
@@ -329,7 +328,7 @@ function buildLinearHandle(input: {
 }
 
 async function dispatchAgentSession(input: {
-  readonly send: ChannelOperations<LinearChannelState>["send"];
+  readonly from: ChannelFrom<LinearChannelState>;
   readonly config: LinearChannelConfig;
   readonly event: LinearAgentSessionEvent;
   readonly onAgentSession: NonNullable<LinearChannelConfig["onAgentSession"]>;
@@ -349,14 +348,13 @@ async function dispatchAgentSession(input: {
     fetch: input.config.api?.fetch,
   });
 
-  await input.send(linearContinuationToken(event.agentSession.id), {
+  await input.from(linearContinuationToken(event.agentSession.id)).send(message, {
     auth: result.auth,
     context: [
       formatLinearContextBlock(event),
       ...event.previousComments,
       ...(result.context ?? []),
     ],
-    message,
     state: stateFromAgentSession(event.agentSession),
   });
 }
