@@ -17,6 +17,8 @@ function createMockRunHandle(): RunHandle {
 function createRuntime(deliverError: unknown): Runtime {
   return {
     cancelTurn: vi.fn(),
+    clearSession: vi.fn(),
+    compactSession: vi.fn(),
     deliver: vi.fn().mockRejectedValue(deliverError),
     resolveSession: vi.fn(),
     run: vi.fn().mockResolvedValue(createMockRunHandle()),
@@ -52,6 +54,22 @@ describe("createSendFn", () => {
     warn.mockRestore();
   });
 
+  it("rethrows a typed no-active-session error when resume intent forbids fallback", async () => {
+    const noSession = new RuntimeNoActiveSessionError("test:token");
+    const runtime = createRuntime(noSession);
+
+    const send = createSendFn(runtime, ADAPTER, "test");
+    await expect(
+      send("hello", {
+        auth: null,
+        continuationToken: "token",
+        intent: "resume",
+      }),
+    ).rejects.toBe(noSession);
+
+    expect(runtime.run).not.toHaveBeenCalled();
+  });
+
   it("propagates unexpected delivery failures without starting a new session", async () => {
     const failure = new Error("boom");
     const runtime = createRuntime(failure);
@@ -81,6 +99,8 @@ describe("createSendFn", () => {
     const context = ["thread background"];
     const deliverRuntime: Runtime = {
       cancelTurn: vi.fn(),
+      clearSession: vi.fn(),
+      compactSession: vi.fn(),
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),
@@ -113,9 +133,43 @@ describe("createSendFn", () => {
     });
   });
 
+  it("forwards the turn caller from options onto the deliver input", async () => {
+    const runtime: Runtime = {
+      cancelTurn: vi.fn(),
+      clearSession: vi.fn(),
+      compactSession: vi.fn(),
+      deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
+      resolveSession: vi.fn(),
+      run: vi.fn().mockResolvedValue(createMockRunHandle()),
+      getEventStream: vi.fn().mockResolvedValue(new ReadableStream<MessageStreamEvent>()),
+      getStreamTailIndex: vi.fn().mockResolvedValue(-1),
+      terminateSession: vi.fn(),
+    };
+    const caller = {
+      callId: "call-1",
+      replyTo: { kind: "hook" as const, token: "parent-turn" },
+      subagentName: "research",
+    };
+
+    await createSendFn(
+      runtime,
+      ADAPTER,
+      "test",
+    )({ message: "follow up" }, { auth: null, caller, continuationToken: "token" });
+
+    expect(runtime.deliver).toHaveBeenCalledWith({
+      auth: null,
+      caller,
+      continuationToken: "test:token",
+      payload: expect.not.objectContaining({ caller: expect.anything() }),
+    });
+  });
+
   it("adds channel request ids to deliver and run inputs when provided", async () => {
     const deliverRuntime: Runtime = {
       cancelTurn: vi.fn(),
+      clearSession: vi.fn(),
+      compactSession: vi.fn(),
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),
@@ -146,6 +200,8 @@ describe("createSendFn", () => {
     } as const;
     const deliverRuntime: Runtime = {
       cancelTurn: vi.fn(),
+      clearSession: vi.fn(),
+      compactSession: vi.fn(),
       deliver: vi.fn().mockResolvedValue({ sessionId: "existing-session-id" }),
       resolveSession: vi.fn(),
       run: vi.fn().mockResolvedValue(createMockRunHandle()),

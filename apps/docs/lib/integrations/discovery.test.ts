@@ -29,7 +29,19 @@ describe("integration discovery", () => {
     const markdown = integrationMarkdown(slack!);
     expect(markdown).toContain("## Install");
     expect(markdown).toContain("## Quick start");
-    expect(markdown).toContain("eve channels add slack");
+    expect(markdown).toContain("eve add channel/slack");
+  });
+
+  it("renders the Web Chat setup for every host framework it documents", () => {
+    const web = getIntegration("eve");
+    expect(web).toBeDefined();
+
+    const markdown = integrationMarkdown(web!);
+    expect(markdown).toContain("eve add channel/web");
+    expect(markdown).toContain("/docs/guides/frontend/nextjs");
+    expect(markdown).toContain("/docs/guides/frontend/nuxt");
+    expect(markdown).toContain("/docs/guides/frontend/sveltekit");
+    expect(integrationSearchText(web!)).toContain("svelte");
   });
 
   it("renders the Browserbase extension setup", () => {

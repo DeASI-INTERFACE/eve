@@ -78,6 +78,7 @@ function subagentResult(input: {
       result: {
         callId: input.callId,
         kind: "subagent-result",
+        origin: "child",
         output: input.output as never,
         subagentName: input.subagentName,
       },

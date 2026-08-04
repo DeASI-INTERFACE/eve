@@ -128,6 +128,7 @@ describe("defaultMessageReducer", () => {
         result: {
           callId: "call_1",
           kind: "subagent-result",
+          origin: "child",
           output: { summary: "done" },
           subagentName: "research",
         },
