@@ -6,7 +6,7 @@
     {
       "name": "experimental/selfmod",
       "type": "registry:item",
-      "title": "Experimental eve selfmod",
+      "title": "selfmod (Experimental)",
       "description": "Add an experimental, development-only source editing subagent to an eve project.",
       "dependencies": ["eve-selfmod"],
       "files": [
