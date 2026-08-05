@@ -22,13 +22,41 @@ interface ExtensionCapabilityContract {
 const EXTENSION_CAPABILITY_CONTRACTS = {
   extension: { current: 1, supported: [1], dropped: {} },
   tool: { current: 6, supported: [1, 2, 3, 4, 5, 6], dropped: {} },
-  dynamicTool: { current: 9, supported: [1, 2, 3, 4, 5, 6, 7, 8, 9], dropped: {} },
+  dynamicTool: {
+    current: 10,
+    supported: [1, 2, 3, 4, 5, 6, 7, 10],
+    dropped: {
+      8: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+      9: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+    },
+  },
   connection: { current: 2, supported: [1, 2], dropped: {} },
-  hook: { current: 7, supported: [1, 2, 3, 4, 5, 6, 7], dropped: {} },
+  hook: {
+    current: 8,
+    supported: [1, 2, 3, 4, 5, 8],
+    dropped: {
+      6: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+      7: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+    },
+  },
   skill: { current: 1, supported: [1], dropped: {} },
-  dynamicSkill: { current: 6, supported: [1, 2, 3, 4, 5, 6], dropped: {} },
+  dynamicSkill: {
+    current: 7,
+    supported: [1, 2, 3, 4, 7],
+    dropped: {
+      5: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+      6: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+    },
+  },
   instructions: { current: 1, supported: [1], dropped: {} },
-  dynamicInstructions: { current: 6, supported: [1, 2, 3, 4, 5, 6], dropped: {} },
+  dynamicInstructions: {
+    current: 7,
+    supported: [1, 2, 3, 4, 7],
+    dropped: {
+      5: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+      6: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+    },
+  },
   config: { current: 1, supported: [1], dropped: {} },
   state: { current: 2, supported: [1, 2], dropped: {} },
 } as const satisfies Record<string, ExtensionCapabilityContract>;
