@@ -186,6 +186,7 @@ export interface ChannelEvents<TCtx = void> {
   readonly "compaction.completed"?: ChannelEventHandler<"compaction.completed", TCtx>;
   readonly "turn.started"?: ChannelEventHandler<"turn.started", TCtx>;
   readonly "actions.requested"?: ChannelEventHandler<"actions.requested", TCtx>;
+  readonly "action.partial"?: ChannelEventHandler<"action.partial", TCtx>;
   readonly "action.result"?: ChannelEventHandler<"action.result", TCtx>;
   readonly "message.completed"?: ChannelEventHandler<"message.completed", TCtx>;
   readonly "message.appended"?: ChannelEventHandler<"message.appended", TCtx>;
@@ -291,6 +292,7 @@ const channelEventTypes: Record<keyof ChannelEvents, null> = {
   "compaction.completed": null,
   "turn.started": null,
   "actions.requested": null,
+  "action.partial": null,
   "action.result": null,
   "message.completed": null,
   "message.appended": null,
