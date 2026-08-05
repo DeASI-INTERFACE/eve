@@ -155,6 +155,8 @@ export async function setupLinear(
     return {
       kind: "done",
       facts: [{ label: "Vercel Connect", value: dashboardUrl, kind: "url" }],
+      deploymentRequired: true,
+      productionDestinations: [{ label: "Open Linear", url: "https://linear.app" }],
     };
   } catch (error) {
     if (error instanceof WizardCancelledError) return { kind: "cancelled" };
