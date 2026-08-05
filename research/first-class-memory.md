@@ -1,54 +1,96 @@
 ---
 issue: https://github.com/vercel/eve/issues/1510
 status: proposed
-last_updated: "2026-08-01"
+last_updated: "2026-08-05"
 ---
 
 # First-class memory
 
 ## Summary
 
-Add memory to eve as a first-class agent slot: durable cross-session knowledge that an agent can recall, remember, and forget. Remembering a replacement revises an existing record.
+Memory lets an agent carry useful knowledge across sessions. Unlike conversation
+history, memory is a durable, subject-scoped collection of claims that the agent
+can recall, add, revise, and erase.
 
-Declaring a resolved memory collection enables one coherent capability. eve:
+Declaring a resolved memory collection enables the complete memory lifecycle:
 
-- recalls relevant memories automatically before the response;
-- makes every collection searchable through one shared recall tool;
-- contributes collection-bound remember and forget tools;
-- captures durable claims from accepted turns; and
-- enforces scope, provenance, approval, budget, revision, and erasure semantics.
+1. **Recall** finds relevant existing memories before a response and through a
+   model tool.
+2. **Remember** creates or revises a memory when the model or application knows
+   something should persist.
+3. **Capture** examines accepted user-authored input after a completed turn and
+   extracts cited durable claims for future turns.
+4. **Forget** erases a record, while an administrative purge erases the
+   subject's entire collection.
 
-These behaviors are intrinsic. No configuration can create read-only, write-only, tools-off, or recall-disabled memory collections, and no flag disables capture; the one code-level escape hatch is `prepareSource`, which may skip any source for a collection. Data that should not be mutable by the agent belongs in instructions, RAG, application state, or an external system of record instead.
+Capture is the automatic ingestion path. Without it, an agent remembers only
+when the response model happens to call `memory_remember` or application code
+writes a record. Routine facts and preferences would therefore be lost even
+though the user clearly stated them. Capture closes that gap without delaying
+or changing the response: it runs after the turn completes, considers only
+eligible authored input, and must cite the text supporting every proposed
+memory.
 
-eve owns the slot grammar, trusted scope derivation, recall and mutation lifecycle, canonical public model, context rendering, and first-party provider integration. Applications own credentials, databases, stable environment identity, deployment preparation, retention, and authorization inputs.
+```text
+before response   collection ---- automatic recall ----> turn context
+during response   response model -- remember / forget --> collection
+after completion  authored input -------- capture ------> collection
+application       trusted outcome ------ MemoryClient --> collection
+```
 
-## Boundary and invariants
+A collection is one coherent capability. There are no read-only, write-only,
+tools-off, or recall-disabled variants. Capture has no feature flag, although a
+collection's `prepareSource` hook may skip any source. Data that should not be
+mutable by the agent belongs in instructions, RAG, application state, or an
+external system of record instead.
 
-One memory file defines a **collection**: one purpose, provider, and subject scope. At runtime, its scope definition resolves one subject for the turn. A `user` collection can therefore contain many isolated users; the file is not itself one user.
+eve owns the slot grammar, trusted scope derivation, lifecycle, canonical public
+model, context rendering, and first-party provider integration. Applications
+own credentials, databases, stable environment identity, deployment
+preparation, retention, and operator authorization.
 
-| Capability                                                        | Owner                                       | Memory |
-| ----------------------------------------------------------------- | ------------------------------------------- | ------ |
-| Active-turn and per-session state                                 | eve messages, compaction, and `defineState` | No     |
-| Conversation archive and transcript search                        | Session/world storage or an application API | No     |
-| External documents and product knowledge                          | RAG or a knowledge integration              | No     |
-| Cross-session facts, preferences, events, and reusable knowledge  | Memory slot                                 | Yes    |
-| Application truth such as balances, permissions, and order status | Application system of record                | No     |
-| Trusted instructions, skills, and autonomous self-modification    | Instructions, skills, and evaluation        | No     |
+## What belongs in memory
 
-The design has eight invariants:
+Memory is for reusable knowledge that should outlive the session but is not the
+application's source of truth. This boundary prevents the memory store from
+becoming a transcript database, knowledge base, or authorization system.
 
-1. A declared and resolved collection always provides the complete memory capability.
-2. Trusted runtime identity derives scope, and a channel-attested private audience gates disclosure; model input controls neither.
-3. A versioned application, environment, graph-node, and collection-path namespace isolates every collection while surviving redeploys in the same environment.
-4. Automatic and explicit recall are bounded, attributed, untrusted, and transient to the active turn.
-5. Model-proposed memories require citations to eligible source text. eve verifies citation integrity; semantic entailment remains an evaluation target rather than a security guarantee.
-6. Model mutations are idempotent and read-your-writes. Capture begins only from an accepted completed turn and never changes that turn's response outcome.
-7. Forget and purge make content unreachable through every live memory operation. Payload-free barriers prevent replay from recreating erased content.
-8. Canonical writes are durable and read-your-writes. Embeddings and indexes are rebuildable projections that may lag only when stale candidates are revalidated against canonical state.
+| Information                                                      | Owner                                       |
+| ---------------------------------------------------------------- | ------------------------------------------- |
+| Active-turn and per-session state                                | eve messages, compaction, and `defineState` |
+| Conversation archive and transcript search                       | Session/world storage or an application API |
+| External documents and product knowledge                         | RAG or a knowledge integration              |
+| Cross-session facts, preferences, events, and reusable knowledge | Memory                                      |
+| Balances, permissions, order status, and other application truth | Application system of record                |
+| Trusted instructions, skills, and autonomous self-modification   | Instructions, skills, and evaluation        |
 
-Records are atomic text claims with optional occurrence time, expiry, and citations. V1 does not impose `fact`, `preference`, or `episode` kinds because those labels do not yet produce distinct behavior.
+One memory file defines a **collection**: one purpose, provider, and subject
+scope. A collection may hold records for many isolated subjects; a `user`
+collection is not itself one user. Records are atomic text claims with optional
+occurrence time, expiry, and citations. V1 does not label records as facts,
+preferences, or episodes because those labels do not yet change behavior.
+
+The design makes these commitments:
+
+- Trusted runtime identity determines the subject. Model input never selects a
+  scope, and memory is disclosed only to a channel-attested private audience.
+- Application, environment, graph node, collection path, and subject jointly
+  isolate storage while allowing redeployments in one environment to share it.
+- Recall is bounded, attributed, treated as untrusted data, and transient to the
+  current turn.
+- Model-proposed writes cite eligible source text. eve verifies the citation;
+  whether the claim is semantically entailed remains an evaluation concern.
+- Writes are idempotent and read-your-writes. Automatic capture starts only
+  after a completed turn and never changes that turn's outcome.
+- Erased content cannot reappear through recall, replay, stale indexes, or
+  application reads. Canonical state is authoritative; embeddings and indexes
+  are rebuildable projections.
 
 ## Authoring API
+
+The author chooses only the collection's purpose, persistence provider, and
+scope. Declaring it opts into automatic recall, capture, and all memory tools;
+forget always requires approval.
 
 ### Slot grammar
 
@@ -59,13 +101,22 @@ agent/memory/              # XOR with the flat file
   preferences.ts           # collection named "preferences"
 ```
 
-Every module default-exports `defineMemory(...)`. Identity comes from the path; there is no `name` field. The named directory is non-recursive and module-only. Invalid nesting and flat-file/directory collisions fail discovery. Collection slugs are lowercase snake case (`[a-z][a-z0-9_]*`) with a 48-character maximum, so generated mutation tool names stay within eve's 64-character tool-name limit and never mix separator styles. Generated memory tool names are reserved: an authored tool that collides with `memory_recall` or a generated `memory_remember_*`/`memory_forget_*` name fails discovery, like subagent/tool name collisions. Shared code belongs in `agent/lib/`.
+Each module default-exports `defineMemory(...)`. Identity comes from the path,
+so there is no `name` field. The named directory is non-recursive and accepts
+modules only; shared code belongs in `agent/lib/`. Invalid nesting and
+flat-file/directory collisions fail discovery.
 
-Local directory-form subagents may declare the same slot. The graph node ID namespaces each collection, so declared subagents never share memory implicitly. The built-in `agent` tool invokes the root node and uses the root's collections. Single-file and remote subagents do not own local memory slots.
+Collection slugs use lowercase snake case (`[a-z][a-z0-9_]*`) and are at most
+48 characters. This keeps generated mutation tool names within eve's
+64-character tool-name limit. Authored tools may not collide with
+`memory_recall` or generated `memory_remember_*` and `memory_forget_*` names.
 
-### Definition
+Local directory-form subagents may declare the same slot. Their graph node ID
+namespaces each collection, so subagents do not share memory implicitly. The
+built-in `agent` tool uses the root node's collections. Single-file and remote
+subagents do not own local memory slots.
 
-Every collection requires three author decisions: purpose, persistence, and scope.
+### Collection definition
 
 ```ts title="agent/memory.ts"
 import { byPrincipal, defineMemory } from "eve/memory";
@@ -78,557 +129,433 @@ export default defineMemory({
 });
 ```
 
-This collection automatically recalls, exposes all memory tools, and captures durable claims. Forget always requires approval.
+`description` tells the model what belongs in the collection. `provider`
+chooses persistence. `scope` determines the subject from trusted runtime
+identity. `MemoryProvider` and `MemoryScopeDefinition` are opaque eve values.
 
-The public definition stays intentionally small:
-
-```ts
-interface MemoryDefinition {
-  readonly description: string;
-  readonly provider: MemoryProvider;
-  readonly scope: MemoryScopeDefinition;
-  readonly capture?: {
-    readonly model?: AgentStaticModelDefinition;
-    readonly reasoning?: AgentReasoningDefinition;
-    readonly modelOptions?: AgentModelOptionsDefinition;
-    readonly instructions?: string;
-    readonly prepareSource?: MemorySourcePreparer;
-  };
-}
-
-interface MemorySourcePrepareContext {
-  readonly collection: string;
-  readonly sourceId: string;
-  readonly observedAt: string;
-  readonly auth: SessionAuthContext;
-  readonly signal: AbortSignal;
-}
-
-type MemorySourcePreparer = (
-  text: string,
-  context: MemorySourcePrepareContext,
-) => string | null | Promise<string | null>;
-```
-
-`MemoryProvider` and `MemoryScopeDefinition` are opaque eve values. V1 has no public custom provider, scope-resolver, extractor, embedder, tag schema, collection weight, tool toggle, or token-budget API.
+V1 exposes no custom provider, scope resolver, extractor, embedder, tag schema,
+collection weight, tool toggle, or token-budget API.
 
 ### Capture configuration
 
-Capture is intrinsic. Omit `capture` to use eve's defaults; the block only configures capture:
+The optional `capture` block tunes automatic extraction; omitting it uses eve's
+defaults. It does not turn capture on.
 
 ```ts
 capture: {
   model: "anthropic/claude-sonnet-5",
   reasoning: "low",
-  modelOptions: {
-    providerOptions: {
-      gateway: { serviceTier: "flex" },
-    },
-  },
   instructions: "Prefer durable preferences over one-time requests.",
-  prepareSource(text, context) {
-    return text;
+  prepareSource(text) {
+    return redactSensitiveText(text);
   },
 },
 ```
 
-- `model` selects the capture-only model. It accepts a Gateway ID or direct AI SDK `LanguageModel`, but not dynamic selection because a durable intent must pin one replayable model. Omission uses the agent's compiled static model.
-- `reasoning` sets provider-agnostic AI SDK reasoning effort. With no model override, omission inherits the agent setting. An overridden model uses its provider default unless set explicitly.
-- `modelOptions` forwards provider-specific options only to capture calls. With no model override, omission inherits agent options and an explicit value replaces them. An overridden model inherits no options.
-- `instructions` supplements eve's versioned extraction policy. It cannot expand eligible sources, bypass citations, or weaken hard limits.
-- `prepareSource` is a capture-only minimization and redaction hook. It receives bounded normalized inbound text and trusted collection, source, time, auth, and abort context. It returns transformed text or `null` to skip capture for that source and collection. It does not alter response input, automatic recall, or explicit remember citations. An unconditional `null` is the sanctioned code-level way to run a collection without automatic capture; explicit remember and application writes still work.
+| Option          | Purpose                                                                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model`         | Pins a capture-only Gateway model ID or AI SDK `LanguageModel`. Dynamic selection is not allowed because replay must use one durable model choice. Omission uses the agent's compiled static model. |
+| `reasoning`     | Sets capture reasoning effort. It inherits the agent setting only when capture also uses the agent model.                                                                                           |
+| `modelOptions`  | Sets capture provider options. When capture uses the agent model, omission inherits the agent's options and an explicit value replaces them. An overridden model inherits no options.               |
+| `instructions`  | Adds collection-specific guidance without expanding eligible sources, bypassing citations, or weakening limits.                                                                                     |
+| `prepareSource` | Minimizes or redacts one normalized source for this collection. Returning `null` skips its capture.                                                                                                 |
 
-V1 capture accepts only authored inbound text. It excludes assistant output, imported threads, channel/client context, instructions, reasoning, tool traffic, approvals, attachments, abandoned attempts, and uncommitted output.
+`prepareSource` receives trusted collection, source, time, auth, and abort
+context. Its result affects only capture; it does not change response input,
+automatic recall, or citations made by the explicit remember tool. Returning
+`null` unconditionally is the sanctioned way to run a collection without
+automatic capture while preserving explicit and application writes.
 
-**Recording action outcomes.** Assistant output is ineligible as capture source and citation evidence because it can be attacker-influenced through prompt injection. The sanctioned path for durable action memory — "the agent booked the 3pm flight" — is an application write: the tool that performs the action records the outcome through `ctx.getMemory(...)`, which commits with `origin: "application"` and needs no model citation.
+## Memory lifecycle
+
+The lifecycle separates retrieving knowledge, deliberately changing it, and
+learning opportunistically from completed turns. That separation gives callers
+a fast response path, a guaranteed write path when needed, and a best-effort
+automatic path for ordinary conversation.
+
+### Recall: make existing memory useful
+
+Recall supplies relevant cross-session context. Merely storing records would
+not help the agent unless eve retrieved them at the right time and clearly
+distinguished them from trusted instructions.
+
+Automatic recall runs after compaction and before the first response-model
+request. Its query combines the latest normalized input with a bounded visible
+window for references such as “that restaurant.” It selects relevant and recent
+records under one wall-clock and token budget, then renders a length-delimited
+data block with collection, purpose, handle, revision time, and available
+citation. A fixed trusted instruction labels the block as untrusted data.
+Memory content does not change eve's permission or approval gates, although
+stored prompt injection can still influence model behavior.
+
+The model can also call `memory_recall` later in the turn with a new query,
+optional collection, occurrence-time range, and result limit. Omitting the
+collection searches every resolved collection using eve-owned rank fusion,
+diversity, deterministic tie-breaking, and a cumulative per-turn budget.
+
+Recall is availability-tolerant but disclosure-strict. A failed collection
+contributes only a sanitized `deadline_exceeded` or `unavailable` status while
+successful collections still return results. If all automatic recall fails,
+the response still runs with an outage status rather than pretending the
+subject has no memories. If all explicit recall fails, the tool returns
+`memory_recall_unavailable` so the model can react.
+
+Before every eve-owned model request, eve revalidates scope, purge generation,
+expiry, definition, and exact canonical revisions. Retrieval projections may
+nominate candidates, but cannot resurrect superseded, expired, erased, or
+purged content. Recalled payloads live only in the transient turn overlay, not
+durable transcript history.
+
+### Explicit remember: guarantee a write
+
+Explicit remember is for knowledge that must be available immediately or whose
+durability is part of the current task. It avoids waiting for capture and makes
+the new value visible to later model steps in the same turn.
+
+The model writes through a collection-bound tool, so it never chooses the
+subject or write scope. A proposed memory must quote an eligible normalized
+source handle from the current turn. To revise a record, the model supplies the
+current memory handle as `supersedes`; stale handles conflict rather than
+overwriting newer knowledge.
+
+Application code can create and revise records without a model citation because
+it is already inside the trusted application boundary. A revision is a full
+replacement under the same logical record ID and requires the expected current
+revision. Both model and application mutations are idempotent, commit before
+reporting success, and provide read-your-writes behavior.
+
+### Capture: learn from ordinary conversation
+
+Capture is a post-turn extraction workflow. It exists so a user can say “I am
+vegetarian” naturally without also asking the agent to remember it or relying
+on the response model to decide that a memory tool call is warranted.
+
+For each collection resolved when the turn begins, capture proceeds as follows:
+
+1. A durable `completed` turn checkpoint records the accepted authored source
+   IDs. Failed, cancelled, abandoned, deferred, or adapter-consumed turns are
+   ineligible.
+2. `prepareSource` minimizes or rejects each source for that collection.
+3. The pinned capture model compares the prepared text with current canonical
+   memory and proposes an add, supersede, or no-op with exact citations.
+4. eve validates source hashes, citation offsets, bounds, purge generation, and
+   revision expectations before committing the proposal idempotently.
+
+Capture retains the subject and private audience sealed at turn admission; it
+never resolves later background work against new auth. A revision conflict
+causes a new proposal against fresh canonical state rather than a blind write
+retry.
+
+V1 accepts only authored inbound text. It excludes assistant output, imported
+threads, channel/client context, instructions, reasoning, tool traffic,
+approvals, attachments, abandoned attempts, and uncommitted output. This keeps
+attacker-influenced assistant or tool output from becoming its own evidence.
+
+Action outcomes such as “the agent booked the 3pm flight” therefore use an
+application write from the tool that performed the action. Application truth
+still belongs in its system of record; the memory is only a reusable account of
+the outcome.
+
+Capture runs after the response settles and transient failures are retried. It
+cannot fail or alter the completed response, and V1 provides no polling or
+freshness barrier. The next turn may not see a captured claim yet. Callers that
+need immediate durability use explicit remember or an application write.
+
+Capture preserves source order. A delayed older turn may add a historical event
+but cannot supersede state learned from a newer source. Replays reuse the same
+source IDs and exact proposal receipt; definition, purge-generation, or
+provider-incarnation changes make stale work obsolete rather than redirecting
+it to a new store.
+
+### Forget and purge: make memory reversible
+
+Memory must support correction and deletion because it stores personal,
+model-generated knowledge. `memory_forget` erases one logical record and always
+uses the existing tool-approval flow. If the session cannot request approval,
+the tool returns `memory_approval_unavailable`; it does not park or fail the
+turn. Applications may erase through a subject-bound client, while trusted
+operator workflows may purge the subject's entire collection.
+
+Forget removes the record, every revision, and revision-owned evidence from all
+live operations. Purge is the complete operation when semantically duplicated
+claims may exist. Payload-free erasure receipts and generation barriers remain
+long enough to prevent workflow or idempotency replay from recreating content.
+A replay against erased content returns only `erased` or `purged`.
+The remaining receipts contain no memory payload, but are still pseudonymous
+operational data governed by retention policy.
+
+This is a live logical unreachability guarantee, not a promise to sanitize MVCC
+pages, WAL, replicas, backups, workflow journals, transcripts, telemetry, or
+model-provider retention. Restoring an older database requires replaying a
+separately retained erasure ledger before serving traffic.
 
 ## Model tools
 
-Memory tools are intrinsic framework operations, not ordinary authored tools. They cannot be disabled, replaced, or independently configured. This deliberately diverges from the `disableTool()` sentinel available for framework default tools: declaring the collection is the opt-in, and the slot always carries its complete capability.
+Tools let the response model search beyond automatic context and deliberately
+manage memory during a turn. They are framework operations rather than ordinary
+authored tools, so declaring a collection always contributes the full set.
 
-The shared tool is `memory_recall`. The flat slot contributes `memory_remember` and `memory_forget`; named collections contribute `memory_remember_<collection>` and `memory_forget_<collection>`.
+| Tool                                                | Important inputs                                                                         | Result                                                                                          |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `memory_recall`                                     | Query, optional collection and occurrence range, limit.                                  | Memories, sanitized per-collection failures, and whether the result was truncated.              |
+| `memory_remember` or `memory_remember_<collection>` | Content, source handle and quote, optional occurrence/expiry time and superseded handle. | `created` or `revised` with the live record; replay after erasure returns `erased` or `purged`. |
+| `memory_forget` or `memory_forget_<collection>`     | Current memory handle.                                                                   | `erased` or `purged`.                                                                           |
 
-```ts
-interface MemoryRecallToolInput {
-  readonly query: string;
-  readonly collection?: string;
-  readonly occurredAfter?: string;
-  readonly occurredBefore?: string;
-  readonly limit?: number;
-}
+The flat slot uses unsuffixed mutation names; directory collections use their
+collection suffix. Mutation tools are collection-bound. Model-facing records
+contain a signed short-lived handle rather than a canonical ID, plus collection,
+content, observation and optional occurrence/expiry times, and citation quotes.
 
-interface MemoryRememberToolInput {
-  readonly content: string;
-  readonly citation: {
-    readonly sourceHandle: string;
-    readonly quote: string;
-  };
-  readonly occurredAt?: string;
-  readonly expiresAt?: string;
-  readonly supersedes?: string;
-}
+Every normalized authored source is shown to the model with a source handle.
+Remember accepts a quote only when it occurs in that source. Recalled memory,
+assistant output, imported context, and tool results are not eligible evidence.
+`supersedes` and forget handles must identify the current revision in the same
+sealed scope.
 
-interface MemoryForgetToolInput {
-  readonly handle: string;
-}
-```
+Expected failures have stable codes:
 
-Mutation tools are collection-bound, so the model never chooses a write scope.
+| Code                          | Meaning                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------ |
+| `memory_handle_expired`       | Recall again to obtain a fresh handle.                                               |
+| `memory_revision_conflict`    | The referenced revision or purge generation is stale.                                |
+| `memory_handle_invalid`       | The handle is malformed, tampered with, or belongs to another scope.                 |
+| `memory_citation_invalid`     | The source handle or quote failed validation.                                        |
+| `memory_approval_unavailable` | The session cannot request forget approval; use an application or admin surface.     |
+| `memory_recall_unavailable`   | Every selected collection failed; the result includes sanitized collection failures. |
 
-Model-facing records use signed short-lived handles rather than canonical IDs:
-
-```ts
-interface MemoryToolRecord {
-  readonly collection: string;
-  readonly handle: string;
-  readonly content: string;
-  readonly observedAt: string;
-  readonly occurredAt?: string;
-  readonly expiresAt?: string;
-  readonly citations: readonly { readonly quote: string }[];
-}
-
-interface MemoryRecallToolResult {
-  readonly memories: readonly MemoryToolRecord[];
-  readonly failures: readonly {
-    readonly collection: string;
-    readonly code: "deadline_exceeded" | "unavailable";
-    readonly retryable: boolean;
-  }[];
-  readonly truncated: boolean;
-}
-
-type MemoryRememberToolResult =
-  | {
-      readonly status: "created" | "revised";
-      readonly memory: MemoryToolRecord;
-    }
-  | { readonly status: "erased" | "purged" };
-
-interface MemoryForgetToolResult {
-  readonly status: "erased" | "purged";
-}
-```
-
-`memory_recall` searches every resolved collection when `collection` is omitted. eve owns cross-collection allocation, rank fusion, deterministic ties, diversity, and the cumulative per-turn result budget. A partial recall returns usable memories plus sanitized collection failures; failure of every selected collection fails the tool. Provider scores and messages never reach the model.
-
-Every framework-normalized source is rendered with a source handle. A remember citation is `{ sourceHandle, quote }`; the normalized quote must occur in that source. `supersedes` references the current memory handle. Recalled memory, assistant output, imported context, and tool results are ineligible evidence.
-
-Remember and forget are idempotent framework side effects. eve checkpoints a stable operation ID and exact request before execution, reports success only after the provider commits, and makes the result visible to later model steps. Replay returns the original result while its content remains live; after forget or purge it returns payload-free `erased` or `purged`. A later-abandoned response does not roll back a completed mutation.
-
-Expected tool failures use stable codes:
-
-- `memory_handle_expired`: recall again for a fresh handle;
-- `memory_revision_conflict`: the addressed revision or purge generation is stale;
-- `memory_handle_invalid`: the handle is malformed, tampered, or belongs to another scope;
-- `memory_citation_invalid`: the source handle or quote failed validation;
-- `memory_approval_unavailable`: the session cannot request the required forget approval because it lacks the input capability; erase through the application or admin surface instead; and
-- `memory_recall_unavailable`: every selected collection failed, with sanitized collection codes.
-
-Forget approval rides the existing tool-approval pipeline. In a session that cannot park for input, `memory_forget` returns `memory_approval_unavailable` as an expected tool failure; it never parks a task turn or fails the turn.
-
-The failed `memory_recall_unavailable` result carries the same sanitized `failures` entries as a partial success and no provider messages or scores.
-
-Memory content never enters durable transcript history: history stores payload-free placeholders that preserve call/result pairing, and validated transient turn content supplies the payloads, so erasure reaches every live surface. Workflow journals may retain normalized source envelopes under world retention.
+Model mutations use checkpointed operation IDs. Exact replay returns the
+original result while it remains live, changed input conflicts, and a later
+abandoned response does not roll back an already committed mutation. Durable
+history stores payload-free call/result placeholders; validated transient turn
+state supplies live memory content.
 
 ## Application control
 
-Application code never uses a provider directly. `MemoryClient` is subject-bound: eve creates it only from matching current auth and private audience, and every method retains that sealed scope. A separate `MemoryAdminClient` is available only through the explicit trusted-operator route surface for data access, rectification, and erasure workflows. Public IDs, revision tokens, handles, and cursors are opaque strings.
+Application access covers cases the model should not own: recording successful
+tool actions, building subject data views, correcting records, and satisfying
+export or erasure requests. Applications use eve clients rather than accessing
+providers directly, preserving the same scope and revision semantics as model
+tools.
+
+`ctx.getMemory(collection)` returns a subject-bound `MemoryClient` for the
+current graph node. An unknown collection throws; a collection unresolved for
+the current principal returns `null`. The client supports `recall`, `get`,
+`list`, `remember`, and `forget`. The subject binding is sealed into the client,
+including mutations, so it cannot be redirected by method input.
+
+| Operation  | Input and behavior                                                                                     |
+| ---------- | ------------------------------------------------------------------------------------------------------ |
+| `recall`   | Query, optional occurrence range, and limit; returns records plus a truncation flag.                   |
+| `get`      | Record ID; returns the current live record or `null`.                                                  |
+| `list`     | Optional cursor and limit; returns one ordered page of live records.                                   |
+| `remember` | New content, or record ID plus expected revision and replacement content; requires an idempotency key. |
+| `forget`   | Record ID and optional expected revision; requires an idempotency key.                                 |
 
 ```ts
-interface MemoryRecordCitation {
-  readonly sourceView: "normalized" | "capture-prepared";
-  readonly sourceId: string;
-  readonly quote: string;
-}
+const memory = await ctx.getMemory("user");
 
-interface MemoryRevision {
-  readonly revision: string;
-  readonly content: string;
-  readonly origin: "capture" | "model-tool" | "application";
-  readonly observedAt: string;
-  readonly occurredAt?: string;
-  readonly expiresAt?: string;
-  readonly citations: readonly MemoryRecordCitation[];
-}
-
-interface MemoryRecord extends MemoryRevision {
-  readonly recordId: string;
-}
-
-interface MemoryRecallInput {
-  readonly query: string;
-  readonly occurredAfter?: string;
-  readonly occurredBefore?: string;
-  readonly limit?: number;
-}
-
-interface MemoryRecallResult {
-  readonly records: readonly MemoryRecord[];
-  readonly truncated: boolean;
-}
-
-interface MemoryListInput {
-  readonly cursor?: string;
-  readonly limit?: number;
-}
-
-interface MemoryPage {
-  readonly records: readonly MemoryRecord[];
-  readonly cursor: string | null;
-}
-
-type MemoryRememberInput =
-  | {
-      readonly content: string;
-      readonly occurredAt?: string;
-      readonly expiresAt?: string;
-    }
-  | {
-      readonly recordId: string;
-      readonly expectedRevision: string;
-      readonly content: string;
-      readonly occurredAt?: string;
-      readonly expiresAt?: string;
-    };
-
-interface MemoryMutationOptions {
-  readonly idempotencyKey: string;
-  readonly signal?: AbortSignal;
-}
-
-type MemoryErrorCode =
-  | "revision_conflict"
-  | "idempotency_conflict"
-  | "invalid_cursor"
-  | "export_invalidated"
-  | "unavailable";
-
-declare class MemoryOperationError extends Error {
-  readonly name: "MemoryOperationError";
-  readonly code: MemoryErrorCode;
-  readonly retryable: boolean;
-}
-
-type MemoryRememberResult =
-  | { readonly status: "created" | "revised"; readonly record: MemoryRecord }
-  | { readonly status: "erased" | "purged" };
-
-type MemoryForgetResult =
-  | { readonly status: "erased"; readonly erasedAt: string }
-  | { readonly status: "not_found" | "purged" };
-
-interface MemoryClient {
-  recall(input: MemoryRecallInput, options?: { signal?: AbortSignal }): Promise<MemoryRecallResult>;
-  get(
-    input: { readonly recordId: string },
-    options?: { signal?: AbortSignal },
-  ): Promise<MemoryRecord | null>;
-  list(input?: MemoryListInput, options?: { signal?: AbortSignal }): Promise<MemoryPage>;
-  remember(
-    input: MemoryRememberInput,
-    options: MemoryMutationOptions,
-  ): Promise<MemoryRememberResult>;
-  forget(
-    input: { readonly recordId: string; readonly expectedRevision?: string },
-    options: MemoryMutationOptions,
-  ): Promise<MemoryForgetResult>;
-}
-
-type MemoryAdminClient = Omit<MemoryClient, "recall"> & {
-  exportRecords(options?: { signal?: AbortSignal }): AsyncIterable<{
-    readonly recordId: string;
-    readonly revisions: readonly MemoryRevision[];
-  }>;
-  purge(
-    options: MemoryMutationOptions,
-  ): Promise<{ readonly status: "purged"; readonly purgeId: string; readonly purgedAt: string }>;
-};
+await memory?.remember({ content: "The 3pm flight was booked." }, { idempotencyKey: bookingId });
 ```
 
-Every method resolves to a plain value. Expected failures throw `MemoryOperationError` with a stable machine-readable `code` and a `retryable` flag, following the connection-error convention: guards match on `name` and `code` rather than `instanceof` because bundlers can duplicate class instances. `revision_conflict`, `idempotency_conflict`, `invalid_cursor`, and `export_invalidated` are never retryable; `unavailable` is the sanitized provider or deadline failure and is retryable. Benign outcomes — `not_found`, replay against erased content — are status values, not errors.
+Route handlers can enumerate root and local-subagent collection descriptors,
+then acquire one of two clients:
 
-A correction is a full replacement and requires both record ID and expected revision. Forget without an expected revision erases the current logical record; with one, a stale target throws `revision_conflict`. Application writes need no model citation, but framework bounds and encoding rules still apply. Public timestamps are RFC 3339 instants; limits must be finite positive integers and are clamped to eve's versioned maximum.
+- `getMemory({ address, auth, audience })` requires verified subject auth and a
+  matching private-audience attestation. It returns `null` when that auth does
+  not resolve the collection.
+- `getMemoryAdmin({ address, principal, operator })` is the explicit trusted
+  operator path. It never impersonates the subject, requires the application to
+  authorize the operator, and records operator fingerprint, reason, target,
+  operation, and outcome.
 
-An occurrence-time filter excludes records without `occurredAt`; without a filter those records remain eligible. `list` orders live records by `observedAt` descending and record ID ascending. Expired records are absent from recall, `get`, and `list`, but retained expired and superseded revisions remain in `exportRecords` until retention or erasure removes them.
+The admin client adds snapshot export and full-scope purge, but not semantic
+recall. Aggregate subject export and purge enumerate collections and acquire an
+admin client for each. Node IDs and public record IDs, revision tokens, handles,
+and cursors are opaque; applications obtain node addresses from enumeration
+rather than constructing them.
 
-An idempotency key binds scope, method, and normalized request. Exact replay returns the original result only while its content remains live. After forget or purge, replay returns payload-free `erased` or `purged`; it never returns deleted content or recreates the write. Changed input throws `idempotency_conflict`.
+An admin principal address supplies an authenticator, optional issuer, and
+principal ID. It must match the same exact authority tuple used when the record
+was written; there is no fuzzy or cross-authority lookup. Unknown collection
+addresses and malformed principal addresses throw rather than returning
+`null`.
 
-Cursors bind collection, scope, purge generation, snapshot, and order. Invalid, expired, wrong-scope, or pre-purge cursors throw `invalid_cursor` rather than restarting. Export iterates one snapshot. If forget or purge changes retained content, the next iterator operation rejects with `export_invalidated`; only clean iterator completion means the export is complete. Sanitized provider availability failures throw `unavailable`; raw database errors and physical keys remain internal.
+Observable client semantics are:
+
+- Corrections replace the full record and require its ID plus expected
+  revision. Forget may optionally require an expected revision.
+- Application writes need no model citation, but bounds, encoding, and expiry
+  rules still apply.
+- `recall`, `get`, and `list` exclude expired records. `list` orders live records
+  by observation time descending, then record ID ascending.
+- Idempotency keys bind scope, method, and normalized request. Changed input
+  returns `idempotency_conflict`; replay after erasure is payload-free.
+- Cursors bind collection, scope, purge generation, snapshot, and order. Invalid,
+  expired, wrong-scope, or pre-purge cursors return `invalid_cursor`.
+- Export reads one snapshot. Concurrent forget or purge invalidates it; only a
+  clean iterator completion means the export is complete.
+- Expected failures expose a stable `MemoryOperationError` name, machine code,
+  and retryability rather than provider errors. Only sanitized availability
+  failures are retryable.
 
 ## Trusted scope and namespace
 
-V1 has one scope definition: `byPrincipal()`. It uses `auth.current`, requires `principalType: "user"`, and resolves this versioned tuple:
+Long-lived memory creates a cross-session disclosure risk: if subject identity
+or delivery privacy came from model-controlled input, one caller could read or
+write another caller's records. eve therefore resolves scope only from trusted
+runtime identity and independently verifies that the response destination is
+private to that same subject.
 
-```ts
-type CanonicalMemoryPrincipalV1 = readonly [
-  version: 1,
-  principalType: "user",
-  authorityKind: "issuer" | "authenticator",
-  authority: string,
-  principalId: string,
-];
-```
+### Principal scope
 
-`issuer` is preferred when present; otherwise eve uses `authenticator`. Required strings must be non-empty. Attributes, display names, `subject`, and `auth.initiator` never define identity.
+V1 provides only `byPrincipal()`. It reads `auth.current`, requires a `user`
+principal, and constructs identity from:
 
-The local provider has one dev-only exception: the trusted dev host may inject a branded memory principal projection for the existing `local-dev` caller. This does not change `SessionAuthContext`, does not make the caller a `user` for connections or governance, and cannot exist outside the local provider capability described below.
+- protocol version;
+- authority type: `issuer` when present, otherwise `authenticator`;
+- the non-empty authority value; and
+- the non-empty principal ID.
 
-```ts
-declare const deliveryAudienceBrand: unique symbol;
+Display names, attributes, `subject`, `auth.initiator`, and authored payloads do
+not affect identity. A collection resolves only when the current principal and
+a sealed private-audience attestation match exactly. The attestation is minted
+by the channel runtime after it verifies every response path is restricted to
+that principal; it cannot be copied from or constructed by a payload. Local
+subagents inherit the root turn's attestation and cannot mint another.
 
-interface DeliveryAudience {
-  readonly [deliveryAudienceBrand]: true;
-}
-```
+Missing, anonymous, non-user, shared, unknown, or mismatched identity leaves the
+collection unresolved. Automatic recall, tools, capture, outbox work, and the
+application client are all absent; eve never falls back to another scope. A
+content-free trace event, development notice, and `/info` resolution descriptor
+make this fail-closed outcome visible without exposing memory content.
 
-The unique-symbol brand provides TypeScript opacity only. Runtime unforgeability comes from a sealed token created and validated by module-private channel-runtime identity; copied, deserialized, payload-authored, and merely shape-compatible objects fail validation. Built-in channels attach the token internally. Trusted custom-channel route handlers receive `attestPrivateAudience(auth)` and may call it only after enforcing that every response path is restricted to that principal. The sealed value binds registered channel identity and the same principal tuple. Local subagents inherit the sealed root-turn audience and cannot remint it.
+Before memory ships, delivery must preserve an immutable envelope for each
+source: source ID, order, provenance, auth, audience, and fingerprints.
+Coalescing may combine model input only after grouping compatible envelopes and
+never across auth or audience fingerprints. Built-in channels enforce private
+destination ownership on every lifecycle route before attesting privacy.
 
-A collection resolves only when current principal and private audience match exactly. Missing, anonymous, non-user, shared, unknown, or mismatched identity makes the collection unavailable: no automatic recall, tools, capture, outbox, or application client. It never falls back to another scope. Unavailability is fail-closed but never fail-silent: eve emits a content-free resolution diagnostic (a trace event and a dev-time notice) naming the collection and the failed condition, and `/info` descriptors report per-collection resolution state for the current caller.
+V1 deliberately excludes anonymous, service, runtime, schedule, shared, and
+agent-global scopes. A shared store would let persisted prompt injection from
+any caller influence every caller. Shared scopes should ship only with explicit
+shared-scope disclosure semantics, not weaker guarantees than private memory.
 
-Before memory ships, eve delivery must preserve one immutable envelope per source containing source ID, order, provenance, auth, audience, and fingerprints. Payloads cannot mint attestations. Coalescing may combine model input only after compatible envelopes are grouped and never across auth or audience fingerprints. Built-in channels must enforce private destination ownership on send, continue, stream, cancel, and reset paths before they attest privacy.
+The local development host is the sole exception: it may project the existing
+`local-dev` caller into a module-private memory principal and audience. This
+does not turn that caller into a user for connections, permissions, governance,
+or authored callbacks, and it cannot exist outside the local provider runtime.
 
-Canonical provider keys derive from this tuple and are passed as keyed opaque digests:
+### Storage namespace
 
-```ts
-type CanonicalMemoryScopeV1 = readonly [
-  protocol: "eve-memory",
-  version: 1,
-  applicationId: string,
-  environmentId: string,
-  graphNodeId: string,
-  collectionPath: string,
-  principal: CanonicalMemoryPrincipalV1,
-];
-```
+The provider receives an opaque digest of a versioned namespace. Each component
+exists to prevent an otherwise plausible collision:
 
-`applicationId` and `environmentId` are stable provider configuration. Vercel integrations may derive them from project and target environment. Self-hosted applications must provide them explicitly; hostname, working directory, `NODE_ENV`, Git SHA, build path, and deployment ID are invalid fallbacks. `applicationId` is the sole stable root identity; package and display-name changes do not affect memory. `graphNodeId` is the root sentinel or path-derived local-subagent address. Redeployments in one environment share memory. Production, preview, development, different application IDs, nodes, paths, and app roots do not share implicitly. Node and collection path renames intentionally require migration.
+| Component       | Isolation behavior                                                     |
+| --------------- | ---------------------------------------------------------------------- |
+| Application ID  | Stable root identity; display or package renames do not change memory. |
+| Environment ID  | Separates production, preview, development, and other targets.         |
+| Graph node ID   | Separates the root agent from each local subagent.                     |
+| Collection path | Separates independently authored collections.                          |
+| Principal tuple | Separates subjects and authentication authorities.                     |
 
-### V1 scope trade-off
+Application and environment IDs come from stable provider configuration.
+Vercel integrations may derive them from project and target environment;
+self-hosted applications provide them explicitly. Hostname, working directory,
+`NODE_ENV`, Git SHA, build path, and deployment ID are not stable fallbacks.
 
-V1 memory exists only for authenticated `user` principals. Agents behind `none()` auth (anonymous callers), service and `runtime` principals, schedule-driven turns, and unknown identities never resolve a collection: a declared slot compiles, tools and capture stay absent, and the resolution diagnostic above is the only observable. The `local-dev` projection is the sole dev-time exception.
+Redeployments in the same environment share memory. Different applications,
+environments, nodes, collection paths, and principals do not share implicitly.
+Renaming a graph node or collection path requires migration.
 
-This is deliberate. Cross-subject disclosure is the dominant memory risk, and trusted identity is the only safe scope key, so V1 refuses to guess a subject. An agent-global `byAgent()` scope was considered and deferred: it has no cross-subject disclosure boundary, but every caller reads and writes one shared store, so persisted prompt injection from any caller reaches every caller, and neither citations nor approval isolate subjects within it. Shared and global scopes wait for the shared-scope disclosure semantics in the final delivery phase rather than shipping with weaker guarantees than the private scope.
+## Sources, provenance, and turn ordering
 
-### Application addressing
+Memory claims need durable evidence, but capture-specific redaction must not
+silently change what the response model saw. eve therefore keeps two immutable
+views of eligible authored text.
 
-In-turn callbacks stay bound to their current graph node:
+| View                        | Created                                | Used by                                                                |
+| --------------------------- | -------------------------------------- | ---------------------------------------------------------------------- |
+| Framework-normalized source | Once for each accepted authored source | Recall query, response source handles, and explicit remember citations |
+| Capture-prepared source     | Once per source and collection         | Capture model, capture validation, and capture-origin citations        |
 
-```ts
-interface SessionContext {
-  getMemory(collection: string): Promise<MemoryClient | null>;
-}
-```
+Framework normalization identifies authored text before adapters merge model
+messages, converts it to well-formed NFC Unicode, normalizes line endings,
+removes blank parts, joins ordered text parts, and applies a versioned UTF-8
+bound. It retains source ID, digest, order, provenance, trusted time, auth, and
+audience fingerprints.
 
-Unknown collections throw; unavailable principal scope returns `null`. Route handlers can enumerate and address root and local-subagent collections:
-
-```ts
-type MemoryNodeAddress =
-  { readonly kind: "root" } | { readonly kind: "local-subagent"; readonly nodeId: string };
-
-interface MemoryCollectionAddress {
-  readonly node: MemoryNodeAddress;
-  readonly collection: string;
-}
-
-interface MemoryCollectionDescriptor {
-  readonly address: MemoryCollectionAddress;
-  readonly description: string;
-}
-
-interface MemoryPrincipalAddress {
-  readonly authenticator: string;
-  readonly issuer?: string;
-  readonly principalId: string;
-}
-
-interface RouteHandlerArgs {
-  attestPrivateAudience(auth: SessionAuthContext): DeliveryAudience;
-  listMemoryCollections(): readonly MemoryCollectionDescriptor[];
-  getMemory(input: {
-    readonly address: MemoryCollectionAddress;
-    readonly auth: SessionAuthContext;
-    readonly audience: DeliveryAudience;
-  }): Promise<MemoryClient | null>;
-  getMemoryAdmin(input: {
-    readonly address: MemoryCollectionAddress;
-    readonly principal: MemoryPrincipalAddress;
-    readonly operator: {
-      readonly auth: SessionAuthContext;
-      readonly reason: string;
-    };
-  }): Promise<MemoryAdminClient>;
-}
-```
-
-Enumeration is root first, then local node ID and collection name. Node IDs are opaque values obtained from enumeration, not constructed by applications. Remote subagents own memory remotely.
-
-`getMemory(...)` requires a verified principal and an attested private audience — a handler lacking either has nothing to pass and must not call it — and returns `null` only when that auth does not resolve the collection's scope. The subject binding covers the entire client, including mutations, because its results may flow into that response.
-
-`getMemoryAdmin(...)` requires no subject audience and never impersonates the subject. A `MemoryPrincipalAddress` canonicalizes exactly as scope resolution would — `issuer` is the authority when present, otherwise `authenticator` — and admin lookups match only that canonical tuple, with no fuzzy or cross-authority matching, so an operator must supply the same authority the records were written under. Unknown addresses and malformed principal addresses throw; the call never returns `null` because admin access does not depend on subject scope resolution. The application must authorize the operator before the call; eve records the operator fingerprint, reason, target, operation, and outcome. Admin clients are never exposed to model tools, callbacks, dynamic resolvers, or serialized payloads.
-
-Aggregate data-subject export and purge iterate descriptors and acquire one admin client per collection. Arbitrary future custom scopes must register enumerable subject mappings. `/info` may expose descriptors for inspection, never subjects or content.
-
-## Sources and lifecycle
-
-### Source views
-
-eve maintains two immutable views instead of overloading “prepared source”:
-
-| View                        | Created                           | Consumers                                                   |
-| --------------------------- | --------------------------------- | ----------------------------------------------------------- |
-| Framework-normalized source | Once per accepted authored source | Recall query, response source handles, explicit citations   |
-| Capture-prepared source     | Per source and collection         | Capture model, capture validation, capture-origin citations |
-
-Framework normalization identifies authored text before adapters merge model messages, converts it to well-formed NFC Unicode, normalizes line endings, removes blank parts, joins ordered text parts, and applies a versioned UTF-8 bound. It preserves case, punctuation, and remaining whitespace. Each source retains its ID, normalization version, digest, order, provenance, trusted time, auth, and audience fingerprints.
-
-`prepareSource` transforms only the second view. Returning `null` skips capture for that collection; it does not suppress recall or invalidate explicit source handles. Response-model handles bind the normalized digest. Model-tool citations bind normalized byte offsets; capture citations bind the prepared digest, preparation fingerprint, and prepared byte offsets. Recall returns stored immutable citations and never reruns preparation.
-
-Normalized source envelopes live in the world/session journal under world retention. Memory providers retain only revision-owned cited excerpts and payload-free source receipts, not complete source objects. Memory erasure does not claim physical deletion from world journals, transcripts, telemetry, or model-provider retention.
-
-### Turn lifecycle
+`prepareSource` creates the second view. Response-model handles bind the
+normalized digest; capture citations bind the prepared digest and preparation
+fingerprint. Recall returns immutable stored excerpts and never reruns source
+preparation.
 
 ```text
-accept + seal per-source envelopes
+accept and seal source envelopes
         |
-framework-normalize authored text
+normalize authored text
         |
-compact and commit placeholder history
-        |
-recall + commit transient turn overlay
-        |
-validate + materialize -> one response-model attempt
-        |
-execute checkpointed memory tools during the loop
-        |
-commit terminal turn checkpoint + capture outbox
-        |
-settle response -> prepare per collection -> dispatch capture
+compact history -> automatic recall -> response-model loop
+                                      |        |
+                              memory tools   terminal checkpoint
+                                                  |
+                                      prepare per collection
+                                                  |
+                                          capture outbox
 ```
 
-This requires new execution primitives before the public API ships. eve must own model retries, disable nested SDK retries, preserve source provenance through coalescing, and commit terminal classification with durable session state. Stream events remain append-only and may already be visible; capture eligibility derives only from the durable checkpoint.
+The terminal checkpoint is internal machinery required to distinguish a
+completed turn from streaming output that was later cancelled or failed. A
+normal response and a completed human-input boundary are capture-eligible;
+authorization or task waits are deferred; failed and cancelled turns are not.
+Workflow replay preserves the same classification and source IDs.
 
-The checkpoint records the durable protocol outcome and accepted sources. It is internal execution machinery, not public API; it appears here only to define capture eligibility:
+Normalized source envelopes remain in the world/session journal under world
+retention. Memory providers retain only cited excerpts and payload-free source
+receipts, not complete source objects. Memory erasure therefore does not claim
+to remove original text from journals, transcripts, telemetry, or provider
+retention.
 
-```ts
-interface TurnTerminalCheckpoint {
-  readonly sessionId: string;
-  readonly turnId: string;
-  readonly sequence: number;
-  readonly outcome: "completed" | "failed" | "cancelled";
-  readonly acceptedSourceIds: readonly string[];
-}
-```
+## Canonical records and consistency
 
-| Turn path                                   | Outcome       | Capture                              |
-| ------------------------------------------- | ------------- | ------------------------------------ |
-| Normal response or completed HITL boundary  | `completed`   | Eligible authored normalized text    |
-| Authorization, runtime action, or task wait | No checkpoint | Deferred                             |
-| Recoverable or terminal turn failure        | `failed`      | Never                                |
-| Cancellation before completion              | `cancelled`   | Never                                |
-| Adapter consumes delivery without a turn    | No checkpoint | Never                                |
-| Workflow replay                             | Same outcome  | Idempotent using the same source IDs |
+The canonical store makes mutation and erasure authoritative; retrieval indexes
+only help find candidates. This distinction is necessary because an eventually
+updated embedding must never make a stale record visible again.
 
-A completed checkpoint creates no outbox for an unresolved collection. For a resolved collection, no authored text or a `null`/blank prepared source produces an internal `skipped` status. Capture retries transient failures; exhausted retries become `failed`, and stale generation or definition becomes `obsolete`. These content-free statuses appear in traces and diagnostics only. V1 exposes no capture polling or freshness barrier. A following turn may not observe capture; callers needing read-after-write use explicit remember or an application write.
+Each logical record points to one current immutable revision. A revision stores
+content, origin (`capture`, `model-tool`, or `application`), observation time,
+optional occurrence and expiry times, and citations. Corrections append a
+revision under the same logical ID using compare-and-swap. V1 has no implicit
+decay, confidence score, autonomous inference, or graph relation.
 
-### Recall
+`observedAt` is trusted commit time. `occurredAt` describes when the claim's
+event happened. `expiresAt` removes it from live operations at the deadline.
+Occurrence-time filtering excludes records without `occurredAt`; without a
+filter those records remain eligible. Retained expired and superseded revisions
+appear only in administrative export until retention or erasure removes them.
 
-Recall runs after compaction and before the first response-model request. Its query uses the latest framework-normalized input plus a bounded visible window for coreference. It combines relevant and recent candidates under one token and wall-clock budget.
-
-Transient provider and deadline failures do not fail the turn. Successful collections still contribute; each failed collection contributes only a content-free `unavailable` status and emits a diagnostic. If every collection fails, the response model still runs with that status rather than an empty-memory result. Scope, generation, expiry, signature, and canonical-integrity checks remain fail-closed for disclosure: invalid content is never supplied.
-
-The explicit recall tool uses the same partial-success representation. When every explicitly selected collection fails, the tool returns `memory_recall_unavailable` so the model can react inside the loop; automatic recall instead places the equivalent status before the first model call. This preserves agent availability without representing an outage as “the user has no memories.”
-
-The contribution is a length-delimited data block attributed by collection name, purpose, handle, revision time, and available citation. A fixed trusted instruction identifies it as untrusted data. It does not change eve permission or approval gates, although stored prompt injection can still influence the model.
-
-Immediately before each eve-owned model request, eve rechecks scope, purge generation, expiry, definition fingerprint, and exact revisions. An unrelated write causes rehydration rather than whole-collection invalidation. A projection can nominate candidates only; canonical rehydration prevents superseded, expired, erased, or purged content from reappearing.
-
-### Capture
-
-For every collection resolved at turn admission, a completed checkpoint creates a payload-free outbox entry that references accepted normalized sources and pins collection, scope, purge generation, provider fingerprint and incarnation, preparation fingerprint, model and extraction versions, source sequence, audience, time, and provenance. It never reruns scope resolution. A provider-incarnation mismatch is terminal `obsolete` and cannot adopt a replacement store.
-
-Capture executes as a durable, idempotent workflow against one strong canonical snapshot: the pinned model proposes add, supersede, or no-op operations with exact citations, and eve verifies preparation hashes, byte offsets, bounds, and revision expectations before committing the exact proposal with a replay receipt. Conflicts re-propose against fresh state rather than blindly retrying.
-
-Each scope has a monotonic source sequence. A delayed older turn may add a historical event but cannot supersede state learned from a newer source.
-
-## Canonical model and erasure
-
-| Record                | Purpose                                   | Core fields                                                     |
-| --------------------- | ----------------------------------------- | --------------------------------------------------------------- |
-| `MemoryScopeVersion`  | Resurrection and cache invalidation       | purge generation, content revision, source sequence             |
-| `MemorySourceReceipt` | Accepted-source identity and replay guard | source ID, keyed digest, clocks, preparation/provenance version |
-| `MemoryCitation`      | Revision-owned evidence                   | source view/digest, version, byte offsets, quote                |
-| `MemoryRevision`      | Immutable assertion revision              | IDs, content, origin, times, citations                          |
-| `MemoryRecord`        | Current canonical view                    | current revision and derived expiry state                       |
-| `MemoryHit`           | Provider recall result                    | canonical candidate ID and provider rank signals                |
-| Erasure receipts      | Payload-free deletion evidence            | operation, target or generation, key version, time              |
-| Admin audit events    | Trusted-operator accountability           | operator fingerprint, reason, target, operation, outcome, time  |
-
-`observedAt` is canonical commit time, `occurredAt` is optional event time, and `expiresAt` excludes a record at or after its deadline according to the provider's trusted clock. Recall, `get`, and `list` exclude expired records; export includes retained expired revisions until retention or erasure removes them.
-
-Corrections append a revision under one logical ID and require the current revision token. CAS ensures one current revision. Stale remember and forget handles conflict rather than changing newer data. V1 has no implicit decay, confidence score, autonomous inference, or graph relation.
-
-Forget removes one logical record, its revisions, and revision-owned evidence from live operations. It does not find semantically duplicated claims; scope purge is the complete live-memory erasure operation. Payload-free receipts and generation barriers remain for at least the maximum replay and idempotency horizon. Accepted mutation receipts shed content when their target is erased and resolve future replay to `erased` or `purged`. Receipts are pseudonymous operational data, not literally data-free.
-
-Restoring an older database requires replaying a separately retained erasure ledger before traffic resumes. Physical database remnants, replicas, backups, workflow journals, transcripts, telemetry, and model-provider retention remain governed by their own policies.
+Each scope also maintains a purge generation, content revision, and monotonic
+source sequence. Source receipts prevent duplicate capture, revision tokens
+provide compare-and-swap, and erasure receipts prevent resurrection. Canonical
+writes are durable and read-your-writes even while embeddings or indexes lag.
 
 ## Provider boundary
 
-V1 publicly exposes only opaque first-party `MemoryProvider` values. A provider owns persistence, within-collection retrieval, projections, readiness, and migration. eve owns scope, canonical public semantics, citations, handles, tools, idempotency orchestration, deadlines, cross-collection fusion, budgets, rendering, and final disclosure validation.
+Providers persist canonical state and retrieve candidates within one
+collection. eve retains the security- and product-defining behavior so changing
+providers cannot change public memory semantics.
 
-The internal protocol must prove namespace isolation, durable canonical writes, strong formation reads, revision CAS, expiry, erase, purge barriers, bounded snapshot export, stale-projection rehydration, readiness, cancellation, limits, fingerprints, retention horizons, and race behavior. Public third-party support waits for production evidence and a branded provider API plus conformance kit.
+Providers own persistence, projections, readiness, migration, and
+within-collection ranking. eve owns scope, public records, citations, handles,
+tools, idempotency, deadlines, cross-collection fusion, budgets, rendering, and
+final disclosure validation. V1 exposes only opaque first-party
+`MemoryProvider` values. A public custom-provider API waits for production
+evidence and a conformance kit.
 
 ### PostgreSQL reference provider
 
-PostgreSQL owns both document and query embedding. `defineMemory` never accepts an embedding model; managed future providers may embed upstream or use a different retrieval strategy entirely.
-
-```ts
-interface MemoryEmbeddingCallOptions {
-  readonly providerOptions?: Record<string, JsonObject>;
-}
-
-interface PostgresMemoryEmbeddingDefinition {
-  readonly model: string | EmbeddingModel;
-  readonly modelRevision?: string;
-  readonly dimensions: number;
-  readonly documentOptions?: MemoryEmbeddingCallOptions;
-  readonly queryOptions?: MemoryEmbeddingCallOptions;
-}
-
-interface PostgresMemoryDefinition {
-  readonly database: PostgresMemoryDatabase;
-  readonly namespace: {
-    readonly applicationId: string;
-    readonly environmentId: string;
-  };
-  readonly embedding: PostgresMemoryEmbeddingDefinition;
-}
-
-interface PostgresMemoryConnection {
-  query<Row extends Record<string, unknown> = Record<string, unknown>>(
-    text: string,
-    values?: readonly unknown[],
-    options?: { readonly signal?: AbortSignal },
-  ): Promise<{ readonly rows: readonly Row[] }>;
-  release(): void;
-}
-
-interface PostgresMemoryPool {
-  connect(options?: { readonly signal?: AbortSignal }): Promise<PostgresMemoryConnection>;
-}
-
-declare function pgDatabase(pool: PostgresMemoryPool): PostgresMemoryDatabase;
-declare function postgresMemory(definition: PostgresMemoryDefinition): PostgresMemoryProvider;
-
-declare function preparePostgresMemory(
-  provider: PostgresMemoryProvider,
-  options?: { readonly signal?: AbortSignal },
-): Promise<{
-  readonly status: "ready";
-  readonly schemaVersion: number;
-  readonly projectionFingerprint: string;
-}>;
-```
+PostgreSQL is the production reference provider. It stores canonical records
+and owns document and query embedding so the collection definition remains
+independent of a retrieval strategy.
 
 ```ts title="agent/lib/memory.ts"
 import { pgDatabase, postgresMemory } from "eve/memory/postgres";
@@ -645,64 +572,67 @@ export const memory = postgresMemory({
 });
 ```
 
-`memoryNamespace` must derive the current stable application and target environment. Never hardcode an environment name in shared source: preview and production must resolve different values, and a missing or ambiguous value fails provider readiness. The Vercel integration owns this derivation for the majority path: a first-party helper resolves `applicationId` from the project and `environmentId` from the target environment, so a Vercel-deployed application writes no namespace code. Self-hosted applications provide both explicitly.
+The namespace supplies stable application and environment IDs. The Vercel
+integration derives these for the common path; self-hosted applications provide
+both. Missing or ambiguous identity fails readiness, and shared source must not
+hardcode an environment name.
 
-The embedding model accepts a Gateway ID or direct AI SDK `EmbeddingModel`. Query and document call options may separately provide provider options for role-specific APIs. `modelRevision` defaults to the Gateway ID when `model` is a string; a direct `EmbeddingModel` instance, mutable alias, middleware, or custom endpoint requires an explicit revision because eve cannot derive a stable identity from it. Dimensions are required and verified because AI SDK models do not report them reliably.
+Embedding configuration accepts a Gateway ID or AI SDK `EmbeddingModel`,
+required dimensions, separate document/query provider options, and a model
+revision when eve cannot derive a stable identity. Retrieval uses deterministic
+hybrid lexical, vector, and recency lanes. A query-embedding failure is an
+availability failure, never an empty result.
 
-Retrieval strategy is a provider implementation choice, not an author knob. V1 uses hybrid recall — lexical, vector, and recency lanes fused deterministically within the collection — over canonical rows; eve rehydrates canonical state and fuses collections. A canonical write is durable and read-your-writes even when its embedding has not yet committed; embeddings are rebuildable projections that commit only while they still match canonical state. Query-embedding failure is an operational recall failure, never an empty result; automatic recall reports the collection as `unavailable` under the policy above. Stable PostgreSQL memory has no lexical-only mode.
+Every retrieval-affecting choice contributes to one projection fingerprint.
+Changing it builds and backfills a side-by-side generation, then activates it
+atomically. Embeddings commit only while they still match canonical state;
+recall rehydrates candidates from canonical rows.
 
-Every retrieval-affecting choice — model identity and revision, dimensions, call options, preprocessing, ranking, and fusion version — is covered by one projection fingerprint. Changing any of them builds a side-by-side projection generation and activates it atomically only after backfill. Runtime readiness verifies schema, pgvector, the active fingerprint, and completed backfill before a session uses memory.
-
-`PostgresMemoryDatabase` and `PostgresMemoryProvider` are opaque branded values. `pgDatabase(pool)` accepts the structural lease contract above, never closes it, and adds no `pg` runtime dependency. Connections and queries must honor the supplied abort signal, including blocked acquisition and in-flight cancellation. `preparePostgresMemory(...)` runs migrations, canary validation, backfill, and projection activation; applications invoke it from a deploy-time step — a build command on Vercel, a migration job self-hosted — before new code serves traffic. eve never migrates implicitly: `eve dev` and `eve start` fail readiness rather than migrate on demand, and a failed prepare rejects without changing the active generation. Namespace migration freezes old writers and preserves purge generations and receipts. PostgreSQL erasure guarantees live logical unreachability, not immediate sanitization of MVCC pages, WAL, replicas, snapshots, or backups.
+`pgDatabase(pool)` wraps a structural connection-lease contract. It neither
+adds a `pg` runtime dependency nor closes the caller's pool. Acquisition and
+queries honor abort signals. Applications run
+`preparePostgresMemory(provider)` at deploy time for migrations, validation,
+backfill, and projection activation. `eve dev` and `eve start` check readiness
+but never migrate implicitly. Failed preparation leaves the active generation
+unchanged.
 
 ### Test and local providers
 
-Tests create an isolated deterministic provider explicitly:
+`createTestMemory()` returns an opaque deterministic provider plus a controller
+with a fixed clock and queued `snapshot()` and `reset()` operations. It performs
+no filesystem, network, wall-clock, random, or timer access, but enforces the
+same canonical, revision, idempotency, expiry, citation, erase, purge, and cursor
+semantics as production.
 
-```ts
-import { byPrincipal, defineMemory } from "eve/memory";
-import { createTestMemory } from "eve/memory/testing";
+`localMemory()` is an explicit development provider; eve never substitutes it
+for PostgreSQL. It uses Node's built-in `DatabaseSync` and stores canonical
+state in `.eve/memory/v1/local.sqlite`, surviving hot reloads, worker
+replacement, `/new`, and `eve dev` restarts. A bounded deterministic JavaScript
+ranker supplies lexical, fuzzy, and recency retrieval without embeddings.
 
-const testMemory = createTestMemory();
-
-export default defineMemory({
-  description: "Stable user preferences.",
-  provider: testMemory.provider,
-  scope: byPrincipal(),
-});
-```
-
-The controller provides a fixed controllable clock, queued `snapshot()` and `reset()` operations, and an opaque provider. It performs no filesystem, network, wall-clock, random, or timer access. It enforces the real canonical, CAS, idempotency, expiry, citation, erase, purge, and cursor semantics rather than acting as a permissive fake.
-
-Local development selects an explicit provider; eve never silently substitutes it for PostgreSQL:
-
-```ts title="agent/lib/memory.ts"
-import { localMemory } from "eve/memory/local";
-
-export const memory = localMemory();
-```
-
-`localMemory()` uses `DatabaseSync` directly from Node's built-in `node:sqlite`, adding no package, ORM, native addon, or database adapter. It stores canonical state in `.eve/memory/v1/local.sqlite`, enables WAL, and commits mutations with SQLite transactions. The path is rooted at the authored app rather than a generated snapshot, so memory survives hot reloads, worker replacement, `/new`, and `eve dev` restarts. Schema readiness gates generation activation; migrations require quiesced dev workers, and transactions fence the schema version and store incarnation.
-
-The local provider stores no embeddings or search projection. It loads a bounded live scope and uses a shared versioned deterministic JavaScript ranker with lexical, fuzzy, and recent lanes. This is for lifecycle development and predictable tests, not evidence of production recall quality.
-
-The loopback dev channel retains its existing `local-dev` auth identity. The trusted dev host supplies a separate module-private memory principal and private audience, with session ownership enforced on all lifecycle routes. This does not make the synthetic caller a user for connections, permissions, or authored callbacks.
-
-Local inspection and reset are available through `eve memory path|ls|show|recall|reset`. These commands operate on the local provider's SQLite store only; they never connect to a production provider. Content is redacted from framework traces by default. The provider creates app-local ignore protection for `.eve/memory`, and build/deployment adapters hard-exclude it. Corruption fails closed and explicit reset quarantines the database, WAL, and SHM before creating a new incarnation.
-
-The test and local providers are rejected by `eve build` and `eve start`; mounting additionally requires a module-private test or `eve dev` runtime capability rather than an environment variable. There is no production escape hatch or automatic migration to PostgreSQL.
+Local inspection and reset use `eve memory path|ls|show|recall|reset`. The store
+is ignored and excluded from builds, content is trace-redacted by default, and
+reset quarantines corrupt database files before creating a new incarnation.
+Test and local providers require private test or development runtime capability
+and are rejected by `eve build` and `eve start`; there is no production escape
+hatch.
 
 ## Out of scope
 
-- Read-only, write-only, recall-disabled, or tool-disabled memory collections, and configuration flags that disable capture (`prepareSource` is the code-level per-source skip).
+- Partial-capability collections or configuration flags that disable capture.
+  `prepareSource` remains the code-level per-source skip.
 - A mutable `MEMORY.md` canonical store or model-managed memory filesystem.
-- A hosted memory service, transcript store, RAG store, or application system of record.
-- Capturing assistant output, reasoning, tool payloads, attachments, or imported context in V1.
-- Shared scopes, multiple scopes per collection, or implicit sharing in V1.
-- Tags, typed record kinds, profiles, graph relations, confidence, autonomous inference, decay, or autonomous instruction modification.
+- A hosted memory service, transcript store, RAG store, or application system
+  of record.
+- Capturing assistant output, reasoning, tool payloads, attachments, or imported
+  context in V1.
+- Shared or multiple scopes per collection, and implicit sharing.
+- Tags, typed record kinds, profiles, graph relations, confidence, autonomous
+  inference, decay, or autonomous instruction modification.
 - Public custom extractor, embedder, or provider interfaces in V1.
 - Raw-source retention and reprocessing as a provider feature.
-- Physical sanitization guarantees for database remnants, replicas, backups, workflow journals, transcripts, logs, telemetry, or model-provider retention.
+- Physical sanitization guarantees for database remnants, replicas, backups,
+  workflow journals, transcripts, logs, telemetry, or model-provider retention.
 
 ## Primary references
 
