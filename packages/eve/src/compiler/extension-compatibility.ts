@@ -26,8 +26,8 @@ const EXTENSION_CAPABILITY_CONTRACTS = {
     current: 10,
     supported: [1, 2, 3, 4, 5, 6, 7, 10],
     dropped: {
-      8: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
-      9: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+      8: "Session waiting events no longer expose continuationToken.",
+      9: "Session waiting events no longer expose continuationToken.",
     },
   },
   connection: { current: 2, supported: [1, 2], dropped: {} },
@@ -35,8 +35,8 @@ const EXTENSION_CAPABILITY_CONTRACTS = {
     current: 8,
     supported: [1, 2, 3, 4, 5, 8],
     dropped: {
-      6: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
-      7: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+      6: "Session waiting events no longer expose continuationToken.",
+      7: "Session waiting events no longer expose continuationToken.",
     },
   },
   skill: { current: 1, supported: [1], dropped: {} },
@@ -44,8 +44,8 @@ const EXTENSION_CAPABILITY_CONTRACTS = {
     current: 7,
     supported: [1, 2, 3, 4, 7],
     dropped: {
-      5: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
-      6: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+      5: "Session waiting events no longer expose continuationToken.",
+      6: "Session waiting events no longer expose continuationToken.",
     },
   },
   instructions: { current: 1, supported: [1], dropped: {} },
@@ -53,8 +53,8 @@ const EXTENSION_CAPABILITY_CONTRACTS = {
     current: 7,
     supported: [1, 2, 3, 4, 7],
     dropped: {
-      5: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
-      6: "Session lifecycle context now exposes session.id and optional continuation instead of continuationToken.",
+      5: "Session waiting events no longer expose continuationToken.",
+      6: "Session waiting events no longer expose continuationToken.",
     },
   },
   config: { current: 1, supported: [1], dropped: {} },
