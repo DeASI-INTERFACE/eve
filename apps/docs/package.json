@@ -89,7 +89,7 @@
     "chat-adapter-sendblue": "0.2.0",
     "eve": "workspace:*",
     "pngjs": "^7.0.0",
-    "postcss": "8.5.15",
+    "postcss": "8.5.23",
     "shadcn": "4.16.0",
     "tailwindcss": "4.3.0",
     "tsx": "^4.21.0",
