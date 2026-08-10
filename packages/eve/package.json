@@ -332,7 +332,7 @@
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@photon-ai/chat-adapter-imessage": "3.2.0",
     "@standard-schema/spec": "1.1.0",
-    "@sveltejs/kit": "^2.69.1",
+    "@sveltejs/kit": "^2.70.2",
     "@types/json-schema": "7.0.15",
     "@types/react": "catalog:",
     "@types/react-test-renderer": "19.1.0",
